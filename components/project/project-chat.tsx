@@ -19,13 +19,88 @@ interface ProjectChatProps {
   project: Project
 }
 
+// Configuración según protocolo oficial de n8n Chat Trigger
+const CHAT_CONFIG = {
+  chatInputKey: 'chatInput',
+  chatSessionKey: 'sessionId',
+  loadPreviousSession: true,
+  enableStreaming: true, // Soporta ambos modos
+}
+
+// Gestión de sesión persistente (localStorage)
+const SESSION_STORAGE_KEY = 'n8n-chat-session'
+const MESSAGES_STORAGE_KEY_PREFIX = 'n8n-chat-messages'
+
+function getStoredSessionId(projectId: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = localStorage.getItem(`${SESSION_STORAGE_KEY}-${projectId}`)
+    return stored
+  } catch {
+    return null
+  }
+}
+
+function storeSessionId(projectId: string, sessionId: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(`${SESSION_STORAGE_KEY}-${projectId}`, sessionId)
+  } catch (error) {
+    console.error('Failed to store session ID:', error)
+  }
+}
+
+function getStoredMessages(projectId: string): Message[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const stored = localStorage.getItem(`${MESSAGES_STORAGE_KEY_PREFIX}-${projectId}`)
+    if (!stored) return []
+    return JSON.parse(stored).map((msg: any) => ({
+      ...msg,
+      timestamp: new Date(msg.timestamp)
+    }))
+  } catch {
+    return []
+  }
+}
+
+function storeMessages(projectId: string, messages: Message[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(`${MESSAGES_STORAGE_KEY_PREFIX}-${projectId}`, JSON.stringify(messages))
+  } catch (error) {
+    console.error('Failed to store messages:', error)
+  }
+}
+
 export function ProjectChat({ project }: ProjectChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [sessionId] = useState(() => uuidv4().replace(/-/g, ''))
+  const [sessionId, setSessionId] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Inicializar sesión y cargar mensajes previos
+  useEffect(() => {
+    if (CHAT_CONFIG.loadPreviousSession) {
+      const storedSessionId = getStoredSessionId(project.id)
+      const storedMessages = getStoredMessages(project.id)
+      
+      if (storedSessionId && storedMessages.length > 0) {
+        setSessionId(storedSessionId)
+        setMessages(storedMessages)
+      } else {
+        const newSessionId = uuidv4().replace(/-/g, '')
+        setSessionId(newSessionId)
+        storeSessionId(project.id, newSessionId)
+      }
+    } else {
+      const newSessionId = uuidv4().replace(/-/g, '')
+      setSessionId(newSessionId)
+    }
+  }, [project.id])
 
   // Auto-scroll al final cuando hay nuevos mensajes
   useEffect(() => {
@@ -39,56 +114,83 @@ export function ProjectChat({ project }: ProjectChatProps) {
     }
   }, [isLoading])
 
+  // Persistir mensajes cuando cambian
+  useEffect(() => {
+    if (messages.length > 0 && CHAT_CONFIG.loadPreviousSession) {
+      storeMessages(project.id, messages)
+    }
+  }, [messages, project.id])
+
   const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return
+    if (!inputMessage.trim() || isLoading || !sessionId) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: inputMessage,
+      content: inputMessage.trim(),
       timestamp: new Date(),
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const currentInput = inputMessage.trim()
     setInputMessage('')
     setIsLoading(true)
 
+    // Crear AbortController para cancelar request si es necesario
+    abortControllerRef.current = new AbortController()
+
     try {
-      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_CHAT || 
-                         'https://primary-production-a11a.up.railway.app/webhook/933a71bd-8e1c-4766-95b0-a8799b5ff40d'
+      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_CHAT
+
+      if (!webhookUrl) {
+        throw new Error('Webhook URL no configurada')
+      }
+
+      // Payload según protocolo oficial de n8n Chat Trigger
+      const payload: Record<string, any> = {
+        [CHAT_CONFIG.chatInputKey]: currentInput,
+        [CHAT_CONFIG.chatSessionKey]: sessionId,
+      }
+
+      // Añadir metadata opcional (útil para filtros en n8n)
+      payload.metadata = {
+        projectId: project.id,
+        projectName: project.name,
+        timestamp: new Date().toISOString(),
+      }
 
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          message: inputMessage,
-          projectId: project.id,
-          sessionId: sessionId,
-        }),
+        body: JSON.stringify(payload),
+        signal: abortControllerRef.current.signal,
       })
 
       if (!response.ok) {
-        throw new Error('Error al comunicarse con el asistente')
+        throw new Error(`Error del servidor: ${response.status} ${response.statusText}`)
       }
 
-      const data = await response.json()
-      
-      // La respuesta puede ser texto plano o JSON con campo response
-      const assistantText = typeof data === 'string' 
-        ? data 
-        : data.response || data.text || 'Lo siento, no pude generar una respuesta.'
+      // Detectar si la respuesta es streaming
+      const contentType = response.headers.get('content-type')
+      const isStreamingResponse = contentType?.includes('text/event-stream') || 
+                                   contentType?.includes('application/x-ndjson')
 
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: assistantText,
-        timestamp: new Date(),
+      if (CHAT_CONFIG.enableStreaming && isStreamingResponse) {
+        // Modo streaming: procesar chunks progresivamente
+        await handleStreamingResponse(response)
+      } else {
+        // Modo normal: respuesta completa
+        await handleNormalResponse(response)
       }
 
-      setMessages((prev) => [...prev, assistantMessage])
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Request cancelled')
+        return
+      }
+
       console.error('Error sending message:', error)
       
       const errorMessage: Message = {
@@ -101,6 +203,81 @@ export function ProjectChat({ project }: ProjectChatProps) {
       setMessages((prev) => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
+      abortControllerRef.current = null
+    }
+  }
+
+  const handleNormalResponse = async (response: Response) => {
+    const data = await response.json()
+    
+    // Parsear respuesta según diferentes formatos posibles de n8n
+    let assistantText = ''
+    
+    if (typeof data === 'string') {
+      assistantText = data
+    } else if (data.output) {
+      assistantText = data.output
+    } else if (data.response) {
+      assistantText = data.response
+    } else if (data.text) {
+      assistantText = data.text
+    } else if (data.message) {
+      assistantText = data.message
+    } else {
+      assistantText = 'Lo siento, no pude generar una respuesta.'
+    }
+
+    const assistantMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      role: 'assistant',
+      content: assistantText,
+      timestamp: new Date(),
+    }
+
+    setMessages((prev) => [...prev, assistantMessage])
+  }
+
+  const handleStreamingResponse = async (response: Response) => {
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+
+    if (!reader) {
+      throw new Error('No se pudo leer la respuesta streaming')
+    }
+
+    let accumulatedText = ''
+    const assistantMessageId = (Date.now() + 1).toString()
+
+    // Crear mensaje inicial vacío que se irá llenando
+    const initialAssistantMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+    }
+
+    setMessages((prev) => [...prev, initialAssistantMessage])
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        accumulatedText += chunk
+
+        // Actualizar el mensaje en tiempo real
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: accumulatedText }
+              : msg
+          )
+        )
+      }
+    } finally {
+      reader.releaseLock()
     }
   }
 
@@ -111,14 +288,39 @@ export function ProjectChat({ project }: ProjectChatProps) {
     }
   }
 
+  const handleNewConversation = () => {
+    const newSessionId = uuidv4().replace(/-/g, '')
+    setSessionId(newSessionId)
+    storeSessionId(project.id, newSessionId)
+    setMessages([])
+    storeMessages(project.id, [])
+  }
+
   return (
     <div className="h-full flex flex-col">
       <Card className="h-full border-0 rounded-none shadow-none flex flex-col">
         <CardHeader className="border-b flex-shrink-0">
-          <CardTitle className="flex items-center">
-            <MessageSquare className="mr-2 h-5 w-5" />
-            Chat del Proyecto: {project.name}
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center">
+              <MessageSquare className="mr-2 h-5 w-5" />
+              Chat: {project.name}
+            </CardTitle>
+            {messages.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleNewConversation}
+                disabled={isLoading}
+              >
+                Nueva conversación
+              </Button>
+            )}
+          </div>
+          {sessionId && (
+            <p className="text-xs text-muted-foreground">
+              Sesión: {sessionId.slice(0, 8)}...
+            </p>
+          )}
         </CardHeader>
 
         <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -131,7 +333,8 @@ export function ProjectChat({ project }: ProjectChatProps) {
                 Comienza una conversación
               </h3>
               <p className="text-sm text-muted-foreground max-w-md">
-                Haz preguntas sobre tus documentos o solicita ayuda con tu proyecto
+                Haz preguntas sobre tus documentos. El asistente utilizará inteligencia artificial
+                para buscar información relevante y darte respuestas precisas.
               </p>
             </div>
           ) : (
@@ -194,12 +397,12 @@ export function ProjectChat({ project }: ProjectChatProps) {
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Escribe tu mensaje..."
-              disabled={isLoading}
+              disabled={isLoading || !sessionId}
               className="flex-1"
             />
             <Button
               onClick={handleSendMessage}
-              disabled={isLoading || !inputMessage.trim()}
+              disabled={isLoading || !inputMessage.trim() || !sessionId}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
               {isLoading ? (

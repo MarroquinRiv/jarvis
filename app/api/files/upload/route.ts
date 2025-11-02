@@ -79,12 +79,19 @@ export async function POST(request: Request) {
       
       if (webhookUrl) {
         const webhookFormData = new FormData()
-        webhookFormData.append('file', file)
+        webhookFormData.append('document', file) // n8n espera 'document' como campo
+        webhookFormData.append('projectId', projectId)
+        webhookFormData.append('userId', user.id)
+        webhookFormData.append('fileName', file.name)
 
-        await fetch(webhookUrl, {
+        const webhookResponse = await fetch(webhookUrl, {
           method: 'POST',
           body: webhookFormData,
         })
+
+        if (!webhookResponse.ok) {
+          console.error('Webhook processing error:', await webhookResponse.text())
+        }
       }
     } catch (webhookError) {
       console.error('Webhook error:', webhookError)

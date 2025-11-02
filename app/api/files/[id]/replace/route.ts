@@ -106,12 +106,21 @@ export async function PUT(
       
       if (webhookUrl) {
         const webhookFormData = new FormData()
-        webhookFormData.append('file', file)
+        webhookFormData.append('document', file) // n8n espera 'document' como campo
+        webhookFormData.append('projectId', existingFile.project_id)
+        webhookFormData.append('userId', user.id)
+        webhookFormData.append('fileName', file.name)
+        webhookFormData.append('isReplacement', 'true')
+        webhookFormData.append('oldFileId', id)
 
-        await fetch(webhookUrl, {
+        const webhookResponse = await fetch(webhookUrl, {
           method: 'POST',
           body: webhookFormData,
         })
+
+        if (!webhookResponse.ok) {
+          console.error('Webhook processing error:', await webhookResponse.text())
+        }
       }
     } catch (webhookError) {
       console.error('Webhook error:', webhookError)
