@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { Project, ProjectFile } from '@/lib/projects'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Upload, FileText, Loader2, X, RefreshCw } from 'lucide-react'
+import { Upload, FileText, X, RefreshCw } from 'lucide-react'
 import { DeleteFileDialog } from './delete-file-dialog'
 import { ReplaceFileDialog } from './replace-file-dialog'
 
@@ -16,58 +16,13 @@ interface FileManagerProps {
 }
 
 export function FileManager({ project, files, onFileUploaded, onFileDeleted }: FileManagerProps) {
-  const [isUploading, setIsUploading] = useState(false)
-  const [uploadError, setUploadError] = useState('')
   const [deleteFileId, setDeleteFileId] = useState<string | null>(null)
   const [replaceFile, setReplaceFile] = useState<ProjectFile | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files
-    if (!selectedFiles || selectedFiles.length === 0) return
-
-    setIsUploading(true)
-    setUploadError('')
-
-    try {
-      for (const file of Array.from(selectedFiles)) {
-        // Validate file type
-        const allowedTypes = [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        ]
-
-        if (!allowedTypes.includes(file.type)) {
-          setUploadError('Solo se permiten archivos PDF, DOC y DOCX')
-          continue
-        }
-
-        const formData = new FormData()
-        formData.append('file', file)
-        formData.append('projectId', project.id)
-
-        const response = await fetch('/api/files/upload', {
-          method: 'POST',
-          body: formData,
-        })
-
-        if (!response.ok) {
-          const error = await response.json()
-          throw new Error(error.error || 'Error al subir archivo')
-        }
-
-        const uploadedFile = await response.json()
-        onFileUploaded(uploadedFile)
-      }
-    } catch (error) {
-      console.error('Error uploading file:', error)
-      setUploadError(error instanceof Error ? error.message : 'Error desconocido')
-    } finally {
-      setIsUploading(false)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+  const handleUploadClick = () => {
+    const n8nFormUrl = process.env.NEXT_PUBLIC_N8N_FORM_UPLOAD
+    if (n8nFormUrl) {
+      window.location.href = n8nFormUrl
     }
   }
 
@@ -97,38 +52,16 @@ export function FileManager({ project, files, onFileUploaded, onFileDeleted }: F
             <span>Archivos del Proyecto</span>
             <Button
               size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
+              onClick={handleUploadClick}
               className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
             >
-              {isUploading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Subiendo...
-                </>
-              ) : (
-                <>
-                  <Upload className="mr-2 h-4 w-4" />
-                  Subir
-                </>
-              )}
+              <Upload className="mr-2 h-4 w-4" />
+              Subir
             </Button>
           </CardTitle>
-          {uploadError && (
-            <p className="text-sm text-red-600 mt-2">{uploadError}</p>
-          )}
         </CardHeader>
 
         <CardContent className="flex-1 overflow-y-auto p-4">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-
           {files.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-12">
               <div className="rounded-full bg-muted p-6 mb-4">
@@ -141,7 +74,7 @@ export function FileManager({ project, files, onFileUploaded, onFileDeleted }: F
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handleUploadClick}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 Subir Archivo

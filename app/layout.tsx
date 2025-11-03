@@ -14,8 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Jarvis - Tu Asistente Inteligente",
-  description: "Gestiona tus proyectos y documentos con IA",
+  title: "J.A.R.V.I.S.",
+  description: "Just A Rather Very Intelligent System - Gestiona tus proyectos y documentos con IA",
+  icons: {
+    icon: '/icon.png',
+  },
 };
 
 export default function RootLayout({

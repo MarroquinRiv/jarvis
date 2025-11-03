@@ -73,31 +73,6 @@ export async function POST(request: Request) {
       file.type
     )
 
-    // Send file to n8n webhook for processing
-    try {
-      const webhookUrl = process.env.N8N_WEBHOOK_FILE_UPLOAD
-      
-      if (webhookUrl) {
-        const webhookFormData = new FormData()
-        webhookFormData.append('document', file) // n8n espera 'document' como campo
-        webhookFormData.append('projectId', projectId)
-        webhookFormData.append('userId', user.id)
-        webhookFormData.append('fileName', file.name)
-
-        const webhookResponse = await fetch(webhookUrl, {
-          method: 'POST',
-          body: webhookFormData,
-        })
-
-        if (!webhookResponse.ok) {
-          console.error('Webhook processing error:', await webhookResponse.text())
-        }
-      }
-    } catch (webhookError) {
-      console.error('Webhook error:', webhookError)
-      // Don't fail the upload if webhook fails
-    }
-
     return NextResponse.json(fileRecord, { status: 201 })
   } catch (error) {
     console.error('Error uploading file:', error)

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { User } from '@supabase/supabase-js'
 import { Project, ProjectFile } from '@/lib/projects'
 import { DashboardHeader } from '@/components/dashboard/dashboard-header'
-import { FileManager } from './file-manager'
+import { UploadZone } from './upload-zone'
 import { ProjectChat } from './project-chat'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -19,7 +19,6 @@ export function ProjectWorkspace({ project, initialFiles, user }: ProjectWorkspa
   const [leftPanelWidth, setLeftPanelWidth] = useState(30) // Ancho en porcentaje
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
-  const [files, setFiles] = useState<ProjectFile[]>(initialFiles)
 
   // Manejar el arrastre del divisor
   const handleMouseDown = () => {
@@ -39,20 +38,12 @@ export function ProjectWorkspace({ project, initialFiles, user }: ProjectWorkspa
     setIsDragging(false)
   }
 
-  const handleFileUploaded = (file: ProjectFile) => {
-    setFiles([file, ...files])
-  }
-
-  const handleFileDeleted = (fileId: string) => {
-    setFiles(files.filter(f => f.id !== fileId))
-  }
-
   return (
     <div className="min-h-screen bg-background" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp}>
       <DashboardHeader user={user} />
 
       <main className="h-[calc(100vh-73px)] flex">
-        {/* Panel izquierdo: Gestión de archivos */}
+        {/* Panel izquierdo: Zona de subida de documentos */}
         <div
           className={`transition-all duration-300 ease-in-out border-r bg-muted/30 ${
             isLeftPanelCollapsed ? 'w-0 opacity-0' : ''
@@ -63,12 +54,7 @@ export function ProjectWorkspace({ project, initialFiles, user }: ProjectWorkspa
         >
           {!isLeftPanelCollapsed && (
             <div className="h-full animate-in fade-in slide-in-from-left duration-300">
-              <FileManager 
-                project={project} 
-                files={files}
-                onFileUploaded={handleFileUploaded}
-                onFileDeleted={handleFileDeleted}
-              />
+              <UploadZone />
             </div>
           )}
         </div>
